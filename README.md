@@ -5,7 +5,7 @@ The student need to tourlbeshoot EC2, Network and Autoscaling issues in zone us-
 
 Target: Fix the web access to the Web server
 
-Download the script and run in bash envoriment.
+Download the script and run in AWS Sandbox envoriment.
 
 git clone https://github.com/jlcloudtea/AWS-FS-Practice Prac
 
