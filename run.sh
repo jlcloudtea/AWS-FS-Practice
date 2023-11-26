@@ -47,6 +47,12 @@ INSTANCE_ID=$(aws ec2 run-instances \
     --query 'Instances[0].InstanceId' \
     --output text)
 
+echo "Instance launched with id $INSTANCE_ID"
+
+# SSH into the instance and install Apache
+aws ec2 wait instance-status-ok --instance-ids $INSTANCE_ID
+PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+
 # SSH into the instance and install Apache
 ssh -i my-key-pair.pem ec2-user@$PUBLIC_IP <<EOF
 sudo yum update -y
@@ -55,9 +61,7 @@ sudo systemctl start httpd
 sudo systemctl enable httpd
 EOF
 
-echo "Instance launched with id $INSTANCE_ID"
 echo "HTTP server installed and started on the instance with IP: $PUBLIC_IP"
-
 
 # List all information
 aws ec2 describe-instances \
