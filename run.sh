@@ -16,6 +16,15 @@ PUBLIC_SUBNET_ID=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/
 # Create Private Subnet
 PRIVATE_SUBNET_ID=$(aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.2.0/24 --availability-zone us-east-1b --query 'Subnet.SubnetId' --output text)
 
+# Create a route table for the public subnet
+PUBLIC_RT_ID=$(aws ec2 create-route-table --vpc-id $VPC_ID --query 'RouteTable.RouteTableId' --output text)
+
+# Associate the public route table with the public subnet
+aws ec2 associate-route-table --route-table-id $PUBLIC_RT_ID --subnet-id $PUBLIC_SUBNET_ID
+
+# Create a route in the public route table that points all traffic (0.0.0.0/0) to the Internet Gateway
+aws ec2 create-route --route-table-id $PUBLIC_RT_ID --destination-cidr-block 0.0.0.0/0 --gateway-id $IGW_ID
+
 # Create Security Group
 SECURITY_GROUP_ID=$(aws ec2 create-security-group --group-name "SG-Troubleshoot" --description "Web security group" --vpc-id $VPC_ID --query 'GroupId' --output text)
 
@@ -30,15 +39,15 @@ AMI_ID="ami-09d3b3274b6c5d4aa"
 INSTANCE_TYPE="t2.micro"
 
 # Create Key Pair
-aws ec2 create-key-pair --key-name my-key-pair --query 'KeyMaterial' --output text > my-key-pair.pem
-chmod 400 my-key-pair.pem
+# aws ec2 create-key-pair --key-name my-key-pair --query 'KeyMaterial' --output text > my-key-pair.pem
+# chmod 400 my-key-pair.pem
 
 # Launch EC2 instance in the public subnet
 INSTANCE_ID=$(aws ec2 run-instances \
     --image-id $AMI_ID \
     --count 1 \
     --instance-type $INSTANCE_TYPE \
-    --key-name my-key-pair \
+    --key-name vockey \
     --security-group-ids $SECURITY_GROUP_ID \
     --subnet-id $PUBLIC_SUBNET_ID \
     --associate-public-ip-address \
@@ -50,8 +59,11 @@ INSTANCE_ID=$(aws ec2 run-instances \
 
 echo "Instance launched with id $INSTANCE_ID"
 
-# SSH into the instance and install Apache
+echo "*****************************************************"
+echo "Please wait until it finish, it may take 2-5 mins"  **
+echo "*****************************************************"
 aws ec2 wait instance-status-ok --instance-ids $INSTANCE_ID
+aws ec2 delete-route --route-table-id $PUBLIC_RT_ID --destination-cidr-block 0.0.0.0/0
 PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
 
 echo "HTTP server installed and started on the instance with IP: $PUBLIC_IP"
