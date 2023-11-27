@@ -43,7 +43,7 @@ INSTANCE_ID=$(aws ec2 run-instances \
     --subnet-id $PUBLIC_SUBNET_ID \
     --associate-public-ip-address \
     --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=Troubleshooting-instance}]' \
-    --user-data file://userdata.txt
+    --user-data file://userdata.txt \
     --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp2"}}]' \
     --query 'Instances[0].InstanceId' \
     --output text)
