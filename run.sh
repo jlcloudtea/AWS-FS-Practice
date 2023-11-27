@@ -43,6 +43,7 @@ INSTANCE_ID=$(aws ec2 run-instances \
     --subnet-id $PUBLIC_SUBNET_ID \
     --associate-public-ip-address \
     --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=Troubleshooting-instance}]' \
+    --user-data file://userdata.txt
     --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":20,"VolumeType":"gp2"}}]' \
     --query 'Instances[0].InstanceId' \
     --output text)
@@ -52,14 +53,6 @@ echo "Instance launched with id $INSTANCE_ID"
 # SSH into the instance and install Apache
 aws ec2 wait instance-status-ok --instance-ids $INSTANCE_ID
 PUBLIC_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
-
-# SSH into the instance and install Apache
-ssh -i my-key-pair.pem ec2-user@$PUBLIC_IP <<EOF
-sudo yum update -y
-sudo yum install -y httpd
-sudo systemctl start httpd
-sudo systemctl enable httpd
-EOF
 
 echo "HTTP server installed and started on the instance with IP: $PUBLIC_IP"
 
