@@ -1,0 +1,18 @@
+#!/bin/bash
+# Install HTTP server (Apache in this case)
+yum update -y
+yum install -y httpd
+
+# Start and enable the HTTP server
+systemctl start httpd
+systemctl enable httpd
+
+# Create TOKEN and assign to 
+TOKEN=`curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"` \
+&& curl -H "X-aws-ec2-metadata-token: $TOKEN" -v http://169.254.169.254/latest/meta-data/
+
+# Create a simple HTML file with instance name
+INSTANCE_NAME=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -v http://169.254.169.254/latest/meta-data/instance-id)
+HOSTNAME=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -v http://169.254.169.254/latest/meta-data/hostname)
+echo "<html><body><h1>Welcome to Cloud Subject! <br>
+This is EC2 Instance: $INSTANCE_NAME and Hostname is $HOSTNAME</h1></body></html>" > /var/www/html/index.html
