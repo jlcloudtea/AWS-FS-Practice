@@ -1,16 +1,112 @@
-# AWS-FS-Practice
-For AWS foundation course troubleshooting practice
+# AWS Foundation Troubleshooting Lab
 
-The student need to tourlbeshoot EC2, Network and Autoscaling issues in zone us-east-1. You need to run it in your AWS CLI enviroment in academy website.
+This guided practice lab creates an intentionally misconfigured AWS web-server environment. Your task is to diagnose the AWS configuration and restore public access to the website.
 
-Target: Fix the web access to the Web server
+## Learning objectives
 
-Download the script and run in AWS Sandbox envoriment.
+After completing the lab, you should be able to:
 
-git clone https://github.com/jlcloudtea/AWS-FS-Practice Prac
+- Follow the network path from the internet to an EC2 instance.
+- Inspect an EC2 instance, subnet, route table, Internet Gateway, and security group.
+- Identify common causes of failed HTTP connectivity.
+- Test and verify a repaired AWS environment.
+- Safely delete AWS resources after a practical activity.
 
-cd Prac
+## Lab environment
 
+The lab creates these resources in `us-east-1`:
+
+- One VPC
+- One public subnet and one private subnet
+- One Internet Gateway
+- One public route table
+- One security group
+- One Amazon Linux EC2 web server
+
+The environment is managed by an AWS CloudFormation stack named `aws-foundation-troubleshooting-lab`.
+
+## Requirements
+
+- An active AWS Academy Learner Lab session
+- AWS CloudShell or another Bash environment with AWS CLI and `curl`
+- Permission to use EC2, VPC, CloudFormation, Systems Manager public parameters, and STS
+- Region `us-east-1`
+
+The activity normally takes 20–40 minutes. Deployment usually takes 3–7 minutes.
+
+## Start the lab
+
+In AWS CloudShell, run:
+
+```bash
+git clone https://github.com/jlcloudtea/AWS-FS-Practice.git
+cd AWS-FS-Practice
 bash run.sh
+```
 
-Then follow the prompt message to create, delete the AWS cloudfomration enviroment.
+The menu will open:
+
+```text
+========================================
+ AWS Foundation Troubleshooting Lab
+========================================
+ Region:     us-east-1
+ Lab status: NOT DEPLOYED
+
+1. Deploy Lab Environment
+2. Check Lab Status
+3. Show Web URL
+4. Get Troubleshooting Hints
+5. Verify My Solution
+6. Delete Lab Environment
+7. Exit
+```
+
+## Student workflow
+
+1. Select **Deploy Lab Environment** and wait until deployment finishes.
+2. Select **Show Web URL** and test the address in a new browser tab.
+3. Use the AWS console to inspect the environment and identify why the website is unavailable.
+4. Make the minimum configuration changes needed to restore access.
+5. Select **Verify My Solution**.
+6. When finished, select **Delete Lab Environment** and type `DELETE` to confirm.
+
+Use **Get Troubleshooting Hints** if you become stuck. The three hints become progressively more specific.
+
+## Success criteria
+
+The lab is complete when **Verify My Solution** reports:
+
+```text
+RESULT: Solution verified successfully!
+```
+
+The verifier checks that the EC2 instance is running and that the expected lab page returns an HTTP 200 response. It does not modify your solution.
+
+## Important cleanup requirement
+
+Always use menu option 6 before the AWS Academy session ends. Exiting the menu does not delete AWS resources.
+
+If normal deletion fails, open CloudFormation in `us-east-1`, inspect the stack events, and retry deletion. Ask your lecturer before manually deleting individual stack resources.
+
+## Common setup problems
+
+### AWS credentials are not active
+
+Start or restart the AWS Academy Learner Lab, wait for the AWS indicator to turn green, and open CloudShell again.
+
+### A lab already exists
+
+Use menu option 2 to inspect it. If you want a fresh attempt, delete the existing lab with option 6 before deploying again.
+
+### Deployment failed
+
+Open CloudFormation in `us-east-1`, select `aws-foundation-troubleshooting-lab`, and inspect the **Events** tab. Delete a failed stack before trying again.
+
+### The web server setup timed out
+
+Wait two minutes, delete the environment, and deploy again. The script does not apply the route-table fault when server setup cannot be confirmed.
+
+## Lecturer information
+
+Implementation details, expected faults, validation steps, and reset guidance are in [docs/LECTURER_GUIDE.md](docs/LECTURER_GUIDE.md).

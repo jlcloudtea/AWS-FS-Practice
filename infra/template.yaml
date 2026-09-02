@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS Foundation web connectivity troubleshooting practice lab
+
+Parameters:
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  LabVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Troubleshooting VPC
+        - Key: Project
+          Value: AWS-FS-Practice
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Troubleshooting IGW
+        - Key: Project
+          Value: AWS-FS-Practice
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref LabVpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LabVpc
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Troubleshooting Public Subnet
+        - Key: Project
+          Value: AWS-FS-Practice
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LabVpc
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: Troubleshooting Private Subnet
+        - Key: Project
+          Value: AWS-FS-Practice
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref LabVpc
+      Tags:
+        - Key: Name
+          Value: Troubleshooting Public Routes
+        - Key: Project
+          Value: AWS-FS-Practice
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Troubleshooting web security group
+      VpcId: !Ref LabVpc
+      SecurityGroupIngress:
+        # Temporary bootstrap rule. The lab controller replaces it after Apache is ready.
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Temporary bootstrap web rule
+      Tags:
+        - Key: Name
+          Value: SG-Troubleshoot
+        - Key: Project
+          Value: AWS-FS-Practice
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  WebInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: DefaultRoute
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref WebSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/usr/bin/env bash
+          set -e
+          dnf install -y httpd
+          systemctl enable --now httpd
+          TOKEN=$(curl --silent --show-error --fail -X PUT \
+            -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' \
+            http://169.254.169.254/latest/api/token)
+          INSTANCE_ID=$(curl --silent --show-error --fail \
+            -H "X-aws-ec2-metadata-token: ${!TOKEN}" \
+            http://169.254.169.254/latest/meta-data/instance-id)
+          HOST_NAME=$(curl --silent --show-error --fail \
+            -H "X-aws-ec2-metadata-token: ${!TOKEN}" \
+            http://169.254.169.254/latest/meta-data/hostname)
+          cat > /var/www/html/index.html <<HTML
+          <!doctype html>
+          <html lang="en">
+          <head><meta charset="utf-8"><title>AWS Foundation Lab</title></head>
+          <body>
+            <h1>AWS Foundation Troubleshooting Lab</h1>
+            <p>Solution verified: the web server is reachable.</p>
+            <p>EC2 instance: ${!INSTANCE_ID}</p>
+            <p>Hostname: ${!HOST_NAME}</p>
+          </body>
+          </html>
+          HTML
+      Tags:
+        - Key: Name
+          Value: Troubleshooting-instance
+        - Key: Project
+          Value: AWS-FS-Practice
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance used by the troubleshooting lab
+    Value: !Ref WebInstance
+  PublicIp:
+    Description: Public IPv4 address of the web server
+    Value: !GetAtt WebInstance.PublicIp
+  PublicUrl:
+    Description: URL students must restore
+    Value: !Sub http://${WebInstance.PublicIp}
+  PublicRouteTableId:
+    Description: Public route table used by the troubleshooting lab
+    Value: !Ref PublicRouteTable
+  SecurityGroupId:
+    Description: Security group used by the troubleshooting lab
+    Value: !Ref WebSecurityGroup
