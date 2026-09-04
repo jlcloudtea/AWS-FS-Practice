@@ -1,6 +1,6 @@
 # AWS Foundation Troubleshooting Lab
 
-This guided practice lab creates an intentionally misconfigured AWS web-server environment. Your task is to diagnose the AWS configuration and restore public access to the website.
+This guided practice lab creates an intentionally misconfigured AWS web-server environment. Your task is to restore public access to the website and correct its Auto Scaling policy.
 
 ## Learning objectives
 
@@ -9,6 +9,8 @@ After completing the lab, you should be able to:
 - Follow the network path from the internet to an EC2 instance.
 - Inspect an EC2 instance, subnet, route table, Internet Gateway, and security group.
 - Identify common causes of failed HTTP connectivity.
+- Trace the relationship between an Auto Scaling Group, scaling policy, and CloudWatch alarm.
+- Determine whether a scale-out policy increases or decreases capacity.
 - Test and verify a repaired AWS environment.
 - Safely delete AWS resources after a practical activity.
 
@@ -21,7 +23,9 @@ The lab creates these resources in `us-east-1`:
 - One Internet Gateway
 - One public route table
 - One security group
-- One Amazon Linux EC2 web server
+- One EC2 Launch Template
+- One Auto Scaling Group with an Amazon Linux web server
+- One high-CPU CloudWatch alarm and dynamic scaling policy
 
 The environment is managed by an AWS CloudFormation stack named `aws-foundation-troubleshooting-lab`.
 
@@ -29,10 +33,10 @@ The environment is managed by an AWS CloudFormation stack named `aws-foundation-
 
 - An active AWS Academy Learner Lab session
 - AWS CloudShell or another Bash environment with AWS CLI and `curl`
-- Permission to use EC2, VPC, CloudFormation, Systems Manager public parameters, and STS
+- Permission to use EC2, VPC, EC2 Auto Scaling, CloudWatch, CloudFormation, Systems Manager public parameters, and STS
 - Region `us-east-1`
 
-The activity normally takes 20–40 minutes. Deployment usually takes 3–7 minutes.
+The activity normally takes 25–45 minutes. Deployment usually takes 4–10 minutes.
 
 ## Start the lab
 
@@ -68,20 +72,22 @@ The menu will open:
 2. Select **Show Web URL** and test the address in a new browser tab.
 3. Use the AWS console to inspect the environment and identify why the website is unavailable.
 4. Make the minimum configuration changes needed to restore access.
-5. Select **Verify My Solution**.
-6. When finished, select **Delete Lab Environment** and type `DELETE` to confirm.
+5. Inspect the high-CPU alarm and its attached Auto Scaling policy.
+6. Correct the policy so that a high-CPU event would add one instance.
+7. Select **Verify My Solution**.
+8. When finished, select **Delete Lab Environment** and type `DELETE` to confirm.
 
-Use **Get Troubleshooting Hints** if you become stuck. The three hints become progressively more specific.
+Use **Get Troubleshooting Hints** if you become stuck. Web connectivity and Auto Scaling have separate sets of three progressive hints.
 
 ## Success criteria
 
 The lab is complete when **Verify My Solution** reports:
 
 ```text
-RESULT: Solution verified successfully!
+RESULT: All troubleshooting tasks completed successfully!
 ```
 
-The verifier checks that the EC2 instance is running and that the expected lab page returns an HTTP 200 response. It does not modify your solution.
+The verifier checks website connectivity, the Auto Scaling Group limits, the high-CPU alarm connection, and the scaling policy action. It does not trigger scaling or modify your solution.
 
 ## Important cleanup requirement
 

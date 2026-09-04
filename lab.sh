@@ -5,7 +5,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_FILE="${SCRIPT_DIR}/infra/template.yaml"
 STATE_DIR="${SCRIPT_DIR}/.lab-state"
-HINT_FILE="${STATE_DIR}/hint-level"
+WEB_HINT_FILE="${STATE_DIR}/web-hint-level"
+ASG_HINT_FILE="${STATE_DIR}/asg-hint-level"
 READY_FILE="${STATE_DIR}/ready"
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
@@ -75,6 +76,30 @@ instance_state() {
         --output text 2>/dev/null
 }
 
+primary_asg_instance() {
+    local asg_name="$1"
+    aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names "${asg_name}" \
+        --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId | [0]' \
+        --output text 2>/dev/null
+}
+
+asg_instance_ids() {
+    local asg_name="$1"
+    aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names "${asg_name}" \
+        --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+        --output text 2>/dev/null
+}
+
+instance_public_ip() {
+    local instance_id="$1"
+    aws ec2 describe-instances \
+        --instance-ids "${instance_id}" \
+        --query 'Reservations[0].Instances[0].PublicIpAddress' \
+        --output text 2>/dev/null
+}
+
 website_http_code() {
     local url="$1"
     curl --connect-timeout 4 --max-time 8 --silent \
@@ -116,11 +141,26 @@ display_header() {
     printf '\n'
 }
 
+wait_for_asg_instance() {
+    local asg_name="$1"
+    local attempt instance_id
+
+    for attempt in $(seq 1 30); do
+        instance_id="$(primary_asg_instance "${asg_name}" || true)"
+        if [[ -n "${instance_id}" && "${instance_id}" != "None" ]]; then
+            printf '%s\n' "${instance_id}"
+            return 0
+        fi
+        sleep 5
+    done
+    return 1
+}
+
 wait_for_bootstrap() {
     local public_ip="$1"
     local attempt page
 
-    info "[5/6] Waiting for the web server setup to finish..."
+    info "Waiting for the web server setup to finish..."
     for attempt in $(seq 1 36); do
         page="$(curl --connect-timeout 3 --max-time 5 --silent \
             "http://${public_ip}" 2>/dev/null || true)"
@@ -139,7 +179,6 @@ seed_troubleshooting_faults() {
     local route_table_id="$1"
     local security_group_id="$2"
 
-    info "[6/6] Preparing the troubleshooting scenario..."
     if ! aws ec2 revoke-security-group-ingress \
         --group-id "${security_group_id}" \
         --protocol tcp --port 80 --cidr '0.0.0.0/0' >/dev/null; then
@@ -161,7 +200,7 @@ seed_troubleshooting_faults() {
 }
 
 deploy_lab() {
-    local instance_id route_table_id security_group_id public_ip
+    local asg_name instance_id route_table_id security_group_id public_ip
 
     printf '\n'
     info "Checking the AWS Academy environment..."
@@ -180,10 +219,11 @@ deploy_lab() {
     fi
     rm -f -- "${READY_FILE}"
 
-    info "[1/6] Creating the VPC and subnets..."
-    info "[2/6] Creating the Internet Gateway and route table..."
-    info "[3/6] Creating the security group..."
-    info "[4/6] Launching the EC2 web server..."
+    info "[1/7] Creating the VPC and subnets..."
+    info "[2/7] Creating the Internet Gateway and route table..."
+    info "[3/7] Creating the security group..."
+    info "[4/7] Creating the Launch Template and Auto Scaling Group..."
+    info "[5/7] Creating the high-CPU alarm and scaling policy..."
 
     if ! aws cloudformation deploy \
         --stack-name "${STACK_NAME}" \
@@ -195,13 +235,24 @@ deploy_lab() {
         return
     fi
 
-    instance_id="$(stack_output InstanceId)"
+    asg_name="$(stack_output AutoScalingGroupName)"
     route_table_id="$(stack_output PublicRouteTableId)"
     security_group_id="$(stack_output SecurityGroupId)"
-    public_ip="$(stack_output PublicIp)"
 
+    if [[ -z "${asg_name}" || "${asg_name}" == "None" ]]; then
+        error "Deployment completed, but the Auto Scaling Group could not be found."
+        return
+    fi
+
+    info "[6/7] Waiting for the Auto Scaling web server to become ready..."
+    instance_id="$(wait_for_asg_instance "${asg_name}")"
     if [[ -z "${instance_id}" || "${instance_id}" == "None" ]]; then
-        error "Deployment completed, but the EC2 instance ID could not be found."
+        error "The Auto Scaling Group did not produce an InService instance in time."
+        return
+    fi
+    public_ip="$(instance_public_ip "${instance_id}")"
+    if [[ -z "${public_ip}" || "${public_ip}" == "None" ]]; then
+        error "The Auto Scaling instance does not have a public IP address."
         return
     fi
 
@@ -212,26 +263,29 @@ deploy_lab() {
 
     if ! wait_for_bootstrap "${public_ip}"; then
         warning "The web server setup is taking longer than expected."
-        printf "The network fault was not applied, so setup can continue.\n"
+        printf "The two network faults were not applied, so setup can continue.\n"
         printf "Wait two minutes, delete the lab, and deploy it again.\n"
         return
     fi
     printf '\n'
 
+    info "[7/7] Applying the troubleshooting scenario..."
     seed_troubleshooting_faults "${route_table_id}" "${security_group_id}" || return
     mkdir -p "${STATE_DIR}"
-    printf '0\n' > "${HINT_FILE}"
+    printf '0\n' > "${WEB_HINT_FILE}"
+    printf '0\n' > "${ASG_HINT_FILE}"
     printf 'ready\n' > "${READY_FILE}"
 
     printf '\n'
     success "Lab environment deployed successfully."
+    printf "Auto Scaling Group: %s\n" "${asg_name}"
     printf "Instance: %s\n" "${instance_id}"
     printf "Public IP: %s\n" "${public_ip}"
     printf "The environment is ready for troubleshooting.\n"
 }
 
 check_lab_status() {
-    local status instance_id state public_ip url code reachability
+    local status asg_name instance_id state public_ip url code reachability desired in_service
 
     printf '\n'
     aws_session_ready || return
@@ -242,17 +296,33 @@ check_lab_status() {
     fi
 
     status="$(stack_status)"
-    instance_id="$(stack_output InstanceId)"
-    public_ip="$(stack_output PublicIp)"
-    state="$(instance_state "${instance_id}")"
-    url="http://${public_ip}"
-    code="$(website_http_code "${url}")"
+    asg_name="$(stack_output AutoScalingGroupName)"
+    instance_id="$(primary_asg_instance "${asg_name}")"
+    state="Not available"
+    public_ip="None"
+    if [[ -n "${instance_id}" && "${instance_id}" != "None" ]]; then
+        public_ip="$(instance_public_ip "${instance_id}")"
+        state="$(instance_state "${instance_id}")"
+    fi
+    desired="$(aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names "${asg_name}" \
+        --query 'AutoScalingGroups[0].DesiredCapacity' --output text 2>/dev/null)"
+    in_service="$(aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names "${asg_name}" \
+        --query 'length(AutoScalingGroups[0].Instances[?LifecycleState==`InService`])' \
+        --output text 2>/dev/null)"
     reachability="Not reachable"
-    [[ "${code}" == "200" ]] && reachability="Reachable"
+    if [[ -n "${public_ip}" && "${public_ip}" != "None" ]]; then
+        url="http://${public_ip}"
+        code="$(website_http_code "${url}")"
+        [[ "${code}" == "200" ]] && reachability="Reachable"
+    fi
 
     printf '%s\n' "Lab environment status"
     printf '%s\n' "----------------------"
     printf "CloudFormation: %s\n" "${status}"
+    printf "Auto Scaling:   %s desired / %s InService\n" "${desired}" "${in_service}"
+    printf "ASG name:       %s\n" "${asg_name}"
     printf "EC2 instance:   %s\n" "${state}"
     printf "Instance ID:    %s\n" "${instance_id}"
     printf "Public IP:      %s\n" "${public_ip}"
@@ -260,7 +330,8 @@ check_lab_status() {
 }
 
 show_web_url() {
-    local public_ip
+    local asg_name instance_id instance_ids public_ip found=0
+    local -a instance_array=()
 
     printf '\n'
     aws_session_ready || return
@@ -270,30 +341,36 @@ show_web_url() {
         return
     fi
 
-    public_ip="$(stack_output PublicIp)"
-    if [[ -z "${public_ip}" || "${public_ip}" == "None" ]]; then
-        warning "The instance does not currently have a public IP address."
+    asg_name="$(stack_output AutoScalingGroupName)"
+    instance_ids="$(asg_instance_ids "${asg_name}")"
+    if [[ -z "${instance_ids}" || "${instance_ids}" == "None" ]]; then
+        warning "The Auto Scaling Group has no InService instances."
         return
     fi
 
-    printf "Web URL: http://%s\n" "${public_ip}"
-    printf "Copy this URL into a new browser tab.\n"
-    printf "If it does not open, begin troubleshooting the AWS environment.\n"
+    printf "Auto Scaling Group: %s\n\n" "${asg_name}"
+    read -r -a instance_array <<< "${instance_ids}"
+    for instance_id in "${instance_array[@]}"; do
+        public_ip="$(instance_public_ip "${instance_id}")"
+        if [[ -n "${public_ip}" && "${public_ip}" != "None" ]]; then
+            found=$((found + 1))
+            printf "Instance %s\n" "${instance_id}"
+            printf "Web URL: http://%s\n\n" "${public_ip}"
+        fi
+    done
+    if [[ "${found}" -eq 0 ]]; then
+        warning "No InService instance currently has a public IP address."
+        return
+    fi
+    printf "Copy a URL into a new browser tab. If it does not open, begin troubleshooting.\n"
 }
 
-show_hint() {
+show_web_hint() {
     local level=0
 
-    printf '\n'
-    aws_session_ready || return
-    if ! stack_exists; then
-        warning "Deploy the lab before requesting a hint."
-        return
-    fi
-
     mkdir -p "${STATE_DIR}"
-    if [[ -f "${HINT_FILE}" ]]; then
-        read -r level < "${HINT_FILE}" || level=0
+    if [[ -f "${WEB_HINT_FILE}" ]]; then
+        read -r level < "${WEB_HINT_FILE}" || level=0
     fi
     [[ "${level}" =~ ^[0-9]+$ ]] || level=0
 
@@ -321,11 +398,77 @@ show_hint() {
             ;;
     esac
 
-    printf '%s\n' "${level}" > "${HINT_FILE}"
+    printf '%s\n' "${level}" > "${WEB_HINT_FILE}"
+}
+
+show_asg_hint() {
+    local level=0
+
+    mkdir -p "${STATE_DIR}"
+    if [[ -f "${ASG_HINT_FILE}" ]]; then
+        read -r level < "${ASG_HINT_FILE}" || level=0
+    fi
+    [[ "${level}" =~ ^[0-9]+$ ]] || level=0
+
+    case "${level}" in
+        0)
+            printf '%s\n' "Auto Scaling hint 1 of 3"
+            printf '%s\n' "------------------------"
+            printf "Trace the relationship between the high-CPU CloudWatch alarm,\n"
+            printf "its scaling policy, and the Auto Scaling Group.\n"
+            level=1
+            ;;
+        1)
+            printf '%s\n' "Auto Scaling hint 2 of 3"
+            printf '%s\n' "------------------------"
+            printf "A high-CPU scale-out policy should increase the group's capacity.\n"
+            printf "Inspect the action configured in the attached dynamic scaling policy.\n"
+            level=2
+            ;;
+        *)
+            printf '%s\n' "Auto Scaling hint 3 of 3"
+            printf '%s\n' "------------------------"
+            printf "For ChangeInCapacity, a positive value adds instances and a negative\n"
+            printf "value removes instances. Correct the policy so it adds one instance.\n"
+            level=3
+            ;;
+    esac
+
+    printf '%s\n' "${level}" > "${ASG_HINT_FILE}"
+}
+
+show_hint_menu() {
+    local choice
+
+    printf '\n'
+    aws_session_ready || return
+    if ! stack_exists; then
+        warning "Deploy the lab before requesting a hint."
+        return
+    fi
+
+    printf '%s\n' "Troubleshooting Hints"
+    printf '%s\n' "---------------------"
+    printf '%s\n' "1. Web Connectivity Hint"
+    printf '%s\n' "2. Auto Scaling Hint"
+    printf '%s\n' "3. Return to Main Menu"
+    printf '\nSelect an option [1-3]: '
+    read -r choice
+
+    case "${choice}" in
+        1) printf '\n'; show_web_hint ;;
+        2) printf '\n'; show_asg_hint ;;
+        3) return ;;
+        *) warning "Please enter a number from 1 to 3." ;;
+    esac
 }
 
 verify_solution() {
-    local instance_id state public_ip url code body
+    local asg_name policy_name alarm_name instance_id state public_ip url code body
+    local min_size desired max_size in_service
+    local policy_type adjustment_type scaling_adjustment policy_arn
+    local alarm_enabled alarm_actions
+    local website_result="FAIL" asg_result="FAIL" alarm_result="FAIL" policy_result="FAIL"
 
     printf '\nChecking your solution...\n\n'
     aws_session_ready || return
@@ -336,33 +479,69 @@ verify_solution() {
         return
     fi
 
-    instance_id="$(stack_output InstanceId)"
-    public_ip="$(stack_output PublicIp)"
-    state="$(instance_state "${instance_id}")"
-
-    printf "EC2 instance:       %s\n" "${state}"
-    if [[ -n "${public_ip}" && "${public_ip}" != "None" ]]; then
-        printf "Public address:     Available\n"
-    else
-        printf "Public address:     Not available\n"
-        printf "Website response:   Not reachable\n\n"
-        warning "RESULT: Not solved yet."
-        printf "Use option 4 if you would like a troubleshooting hint.\n"
-        return
+    asg_name="$(stack_output AutoScalingGroupName)"
+    policy_name="$(stack_output ScalingPolicyName)"
+    alarm_name="$(stack_output HighCpuAlarmName)"
+    instance_id="$(primary_asg_instance "${asg_name}")"
+    public_ip="None"
+    state="Not available"
+    if [[ -n "${instance_id}" && "${instance_id}" != "None" ]]; then
+        public_ip="$(instance_public_ip "${instance_id}")"
+        state="$(instance_state "${instance_id}")"
     fi
 
-    url="http://${public_ip}"
-    body="$(curl --connect-timeout 5 --max-time 10 --silent --show-error "${url}" 2>/dev/null || true)"
-    code="$(website_http_code "${url}")"
+    if [[ -n "${public_ip}" && "${public_ip}" != "None" ]]; then
+        url="http://${public_ip}"
+        body="$(curl --connect-timeout 5 --max-time 10 --silent --show-error "${url}" 2>/dev/null || true)"
+        code="$(website_http_code "${url}")"
+        if [[ "${state}" == "running" && "${code}" == "200" && "${body}" == *"AWS Foundation Troubleshooting Lab"* ]]; then
+            website_result="PASS"
+        fi
+    fi
 
-    if [[ "${state}" == "running" && "${code}" == "200" && "${body}" == *"AWS Foundation Troubleshooting Lab"* ]]; then
-        printf "Website response:   HTTP 200\n\n"
-        success "RESULT: Solution verified successfully!"
-        printf "The web server is now accessible from the internet.\n"
+    read -r min_size desired max_size in_service <<< "$(aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names "${asg_name}" \
+        --query 'AutoScalingGroups[0].[MinSize,DesiredCapacity,MaxSize,length(Instances[?LifecycleState==`InService`])]' \
+        --output text 2>/dev/null)"
+    if [[ "${min_size:-}" == "1" && "${desired:-}" =~ ^[0-9]+$ && \
+          "${max_size:-}" =~ ^[0-9]+$ && "${in_service:-}" =~ ^[0-9]+$ ]] && \
+       (( desired >= 1 && max_size >= 2 && in_service >= 1 )); then
+        asg_result="PASS"
+    fi
+
+    read -r policy_type adjustment_type scaling_adjustment policy_arn <<< "$(aws autoscaling describe-policies \
+        --auto-scaling-group-name "${asg_name}" \
+        --policy-names "${policy_name}" \
+        --query 'ScalingPolicies[0].[PolicyType,AdjustmentType,ScalingAdjustment,PolicyARN]' \
+        --output text 2>/dev/null)"
+    if [[ "${policy_type:-}" == "SimpleScaling" && \
+          "${adjustment_type:-}" == "ChangeInCapacity" && \
+          "${scaling_adjustment:-}" == "1" ]]; then
+        policy_result="PASS"
+    fi
+
+    read -r alarm_enabled alarm_actions <<< "$(aws cloudwatch describe-alarms \
+        --alarm-names "${alarm_name}" \
+        --query 'MetricAlarms[0].[ActionsEnabled,join(`,`,AlarmActions)]' \
+        --output text 2>/dev/null)"
+    if [[ "${alarm_enabled:-}" =~ ^([Tt]rue)$ && \
+          -n "${policy_arn:-}" && \
+          "${alarm_actions:-}" == *"${policy_arn}"* ]]; then
+        alarm_result="PASS"
+    fi
+
+    printf "Website connectivity:  %s\n" "${website_result}"
+    printf "Auto Scaling Group:    %s\n" "${asg_result}"
+    printf "High CPU alarm:        %s\n" "${alarm_result}"
+    printf "Scale-out policy:      %s\n\n" "${policy_result}"
+
+    if [[ "${website_result}" == "PASS" && "${asg_result}" == "PASS" && \
+          "${alarm_result}" == "PASS" && "${policy_result}" == "PASS" ]]; then
+        success "RESULT: All troubleshooting tasks completed successfully!"
+        printf "The website and Auto Scaling configuration have both been verified.\n"
     else
-        printf "Website response:   Not reachable\n\n"
-        warning "RESULT: Not solved yet."
-        printf "Continue tracing the connection from the internet to the web server.\n"
+        warning "RESULT: Lab not completed yet."
+        printf "Continue troubleshooting each area marked FAIL.\n"
         printf "Use option 4 if you would like a troubleshooting hint.\n"
     fi
 }
@@ -402,7 +581,7 @@ delete_lab() {
     fi
 
     if aws cloudformation wait stack-delete-complete --stack-name "${STACK_NAME}"; then
-        rm -f -- "${HINT_FILE}" "${READY_FILE}"
+        rm -f -- "${WEB_HINT_FILE}" "${ASG_HINT_FILE}" "${READY_FILE}"
         rmdir -- "${STATE_DIR}" 2>/dev/null || true
         success "Lab environment deleted successfully."
         printf "No CloudFormation-managed lab resources remain.\n"
@@ -422,7 +601,7 @@ main() {
             1) deploy_lab; pause ;;
             2) check_lab_status; pause ;;
             3) show_web_url; pause ;;
-            4) show_hint; pause ;;
+            4) show_hint_menu; pause ;;
             5) verify_solution; pause ;;
             6) delete_lab; pause ;;
             7) printf "Exiting the lab. Remember to delete your environment when finished.\n"; exit 0 ;;
