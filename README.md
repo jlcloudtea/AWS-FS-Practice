@@ -2,6 +2,14 @@
 
 This guided practice lab creates an intentionally misconfigured AWS web-server environment. Your task is to restore public access to the website and correct its Auto Scaling policy.
 
+## Troubleshooting scope
+
+The exercise contains one issue in each of these areas:
+
+- Public subnet network path
+- EC2 web traffic access
+- Auto Scaling high-CPU response
+
 ## Learning objectives
 
 After completing the lab, you should be able to:
@@ -111,7 +119,7 @@ Open CloudFormation in `us-east-1`, select `aws-foundation-troubleshooting-lab`,
 
 ### The web server setup timed out
 
-Wait two minutes, delete the environment, and deploy again. The script does not apply the route-table fault when server setup cannot be confirmed.
+Wait two minutes, delete the environment, and deploy again. The script does not apply the two network faults when server setup cannot be confirmed.
 
 ## Lecturer information
 
