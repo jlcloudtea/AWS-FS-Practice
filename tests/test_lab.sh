@@ -40,8 +40,22 @@ test_no_lab_status() {
 test_duplicate_deployment_blocked() {
     local output
     stack_exists() { return 0; }
-    output="$(deploy_lab)"
+    output="$(deploy_lab || true)"
     assert_contains "${output}" "A lab environment already exists." "duplicate deployment prevention"
+}
+
+test_successful_deployment_closes_menu() {
+    local output
+    output="$(
+        display_header() { :; }
+        deploy_lab() {
+            printf 'Lab environment deployed successfully.\n'
+            return 0
+        }
+        printf '1\n' | main
+    )"
+    assert_contains "${output}" "this menu will now close" "successful deployment closes menu"
+    assert_contains "${output}" "bash run.sh" "deployment prints restart command"
 }
 
 test_cleanup_role_override() {
@@ -205,6 +219,7 @@ test_successful_verification() {
 
 test_no_lab_status
 test_duplicate_deployment_blocked
+test_successful_deployment_closes_menu
 test_cleanup_role_override
 test_automatic_cleanup_template
 test_progressive_web_hints
