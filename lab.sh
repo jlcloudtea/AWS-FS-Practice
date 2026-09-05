@@ -47,6 +47,25 @@ aws_session_ready() {
     fi
 }
 
+resolve_cleanup_role_arn() {
+    local identity account_id caller_arn arn_label partition
+
+    if [[ -n "${CLEANUP_ROLE_ARN:-}" ]]; then
+        printf '%s\n' "${CLEANUP_ROLE_ARN}"
+        return 0
+    fi
+
+    identity="$(aws sts get-caller-identity --query '[Account,Arn]' --output text 2>/dev/null)" || return 1
+    read -r account_id caller_arn <<< "${identity}"
+    IFS=: read -r arn_label partition _ <<< "${caller_arn}"
+    if [[ -z "${account_id}" || "${account_id}" == "None" || \
+          "${arn_label}" != "arn" || -z "${partition}" ]]; then
+        return 1
+    fi
+
+    printf 'arn:%s:iam::%s:role/LabRole\n' "${partition}" "${account_id}"
+}
+
 stack_status() {
     aws cloudformation describe-stacks \
         --stack-name "${STACK_NAME}" \
@@ -108,7 +127,7 @@ website_http_code() {
 
 display_header() {
     local status="NOT DEPLOYED"
-    local current_status
+    local current_status auto_delete=""
 
     if command -v aws >/dev/null 2>&1; then
         current_status="$(stack_status 2>/dev/null || true)"
@@ -119,6 +138,7 @@ display_header() {
                 else
                     status="DEPLOYED"
                 fi
+                auto_delete="$(stack_output AutomaticCleanup 2>/dev/null || true)"
                 ;;
             "") ;;
             *) status="${current_status}" ;;
@@ -130,7 +150,11 @@ display_header() {
     printf '%s\n' " AWS Foundation Troubleshooting Lab"
     printf '%s\n' "========================================"
     printf " Region:     %s\n" "${AWS_REGION}"
-    printf " Lab status: %s\n\n" "${status}"
+    printf " Lab status: %s\n" "${status}"
+    if [[ -n "${auto_delete}" && "${auto_delete}" != "None" ]]; then
+        printf " Auto-delete: %s\n" "${auto_delete}"
+    fi
+    printf '\n'
     printf '%s\n' "1. Deploy Lab Environment"
     printf '%s\n' "2. Check Lab Status"
     printf '%s\n' "3. Show Web URL"
@@ -201,6 +225,7 @@ seed_troubleshooting_faults() {
 
 deploy_lab() {
     local asg_name instance_id route_table_id security_group_id public_ip
+    local cleanup_role_arn cleanup_description
 
     printf '\n'
     info "Checking the AWS Academy environment..."
@@ -219,15 +244,22 @@ deploy_lab() {
     fi
     rm -f -- "${READY_FILE}"
 
+    cleanup_role_arn="$(resolve_cleanup_role_arn)" || {
+        error "The AWS Academy LabRole ARN could not be determined."
+        printf "Set CLEANUP_ROLE_ARN to a Lambda-compatible role ARN, then try again.\n"
+        return
+    }
+
     info "[1/7] Creating the VPC and subnets..."
     info "[2/7] Creating the Internet Gateway and route table..."
     info "[3/7] Creating the security group..."
     info "[4/7] Creating the Launch Template and Auto Scaling Group..."
-    info "[5/7] Creating the high-CPU alarm and scaling policy..."
+    info "[5/7] Creating the high-CPU alarm, scaling policy, and four-hour cleanup timer..."
 
     if ! aws cloudformation deploy \
         --stack-name "${STACK_NAME}" \
         --template-file "${TEMPLATE_FILE}" \
+        --parameter-overrides CleanupRoleArn="${cleanup_role_arn}" \
         --tags Project=AWS-FS-Practice LabName="${STACK_NAME}" ManagedBy=CloudFormation \
         --no-fail-on-empty-changeset; then
         error "Deployment failed."
@@ -281,11 +313,14 @@ deploy_lab() {
     printf "Auto Scaling Group: %s\n" "${asg_name}"
     printf "Instance: %s\n" "${instance_id}"
     printf "Public IP: %s\n" "${public_ip}"
+    cleanup_description="$(stack_output AutomaticCleanup)"
+    printf "Automatic cleanup: %s\n" "${cleanup_description}"
     printf "The environment is ready for troubleshooting.\n"
 }
 
 check_lab_status() {
     local status asg_name instance_id state public_ip url code reachability desired in_service
+    local cleanup_description
 
     printf '\n'
     aws_session_ready || return
@@ -311,6 +346,7 @@ check_lab_status() {
         --auto-scaling-group-names "${asg_name}" \
         --query 'length(AutoScalingGroups[0].Instances[?LifecycleState==`InService`])' \
         --output text 2>/dev/null)"
+    cleanup_description="$(stack_output AutomaticCleanup)"
     reachability="Not reachable"
     if [[ -n "${public_ip}" && "${public_ip}" != "None" ]]; then
         url="http://${public_ip}"
@@ -327,6 +363,7 @@ check_lab_status() {
     printf "Instance ID:    %s\n" "${instance_id}"
     printf "Public IP:      %s\n" "${public_ip}"
     printf "Website:        %s\n" "${reachability}"
+    printf "Auto-delete:    %s\n" "${cleanup_description}"
 }
 
 show_web_url() {
@@ -562,6 +599,8 @@ delete_lab() {
     printf '\n'
     aws_session_ready || return
     if ! stack_exists; then
+        rm -f -- "${WEB_HINT_FILE}" "${ASG_HINT_FILE}" "${READY_FILE}"
+        rmdir -- "${STATE_DIR}" 2>/dev/null || true
         warning "No lab environment was found. Nothing needs to be deleted."
         return
     fi
