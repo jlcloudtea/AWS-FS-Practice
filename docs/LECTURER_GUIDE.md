@@ -6,6 +6,8 @@
 
 This version covers EC2 web connectivity through a public subnet and a simple Auto Scaling policy connected to a high-CPU CloudWatch alarm.
 
+The stack also contains a safety-net cleanup function. An EventBridge schedule invokes the function four hours after deployment, and the function requests deletion of the complete CloudFormation stack.
+
 ## Seeded faults
 
 The lab contains three intentional faults:
@@ -53,6 +55,14 @@ The verifier is deliberately non-diagnostic. It confirms:
 
 On failure it identifies the affected area, such as website connectivity or the scale-out policy, but it does not expose the incorrect value or provide the exact correction.
 
+## Automatic cleanup
+
+The deployment script passes the AWS Academy `LabRole` ARN to the template. The role is used by a small Lambda function that calls `cloudformation:DeleteStack` when its four-hour EventBridge schedule runs. Manual deletion with menu option 6 remains the expected student workflow; automatic deletion is only a fallback.
+
+The cleanup period begins when the EventBridge rule is created and is not extended when a student uses the lab. If automatic deletion succeeds, the schedule and Lambda function are deleted with the rest of the stack. The local `.lab-state` files may remain in CloudShell, but a later deployment resets them.
+
+For a non-AWS-Academy account, set `CLEANUP_ROLE_ARN` to an existing Lambda execution role that can delete the stack and its resources. If the account cannot pass an appropriate role to Lambda, this automatic-cleanup design cannot be deployed there.
+
 ## Repeat testing checklist
 
 Test the feature branch in a fresh AWS Academy Learner Lab account:
@@ -65,8 +75,9 @@ Test the feature branch in a fresh AWS Academy Learner Lab account:
 6. Correct the scaling adjustment and confirm all verification checks pass.
 7. Confirm the ASG still has one InService instance; verification must not execute the policy.
 8. Delete the stack from the menu.
-9. Confirm the VPC, ASG instances, Launch Template, scaling policy, alarm, security group, route table, subnets, and Internet Gateway are removed.
-10. Deploy and delete once more to validate repeatability.
+9. Confirm the VPC, ASG instances, Launch Template, scaling policy, alarm, security group, route table, subnets, Internet Gateway, EventBridge rule, and cleanup Lambda are removed.
+10. In a separate trial, leave the stack deployed and confirm that automatic deletion begins approximately four hours after deployment.
+11. Deploy and delete once more to validate repeatability.
 
 ## Recovery from failed deletion
 

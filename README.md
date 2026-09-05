@@ -34,6 +34,7 @@ The lab creates these resources in `us-east-1`:
 - One EC2 Launch Template
 - One Auto Scaling Group with an Amazon Linux web server
 - One high-CPU CloudWatch alarm and dynamic scaling policy
+- One EventBridge rule and Lambda function for automatic cleanup
 
 The environment is managed by an AWS CloudFormation stack named `aws-foundation-troubleshooting-lab`.
 
@@ -41,7 +42,7 @@ The environment is managed by an AWS CloudFormation stack named `aws-foundation-
 
 - An active AWS Academy Learner Lab session
 - AWS CloudShell or another Bash environment with AWS CLI and `curl`
-- Permission to use EC2, VPC, EC2 Auto Scaling, CloudWatch, CloudFormation, Systems Manager public parameters, and STS
+- Permission to use EC2, VPC, EC2 Auto Scaling, CloudWatch, CloudFormation, Lambda, EventBridge, Systems Manager public parameters, STS, and the AWS Academy `LabRole`
 - Region `us-east-1`
 
 The activity normally takes 25–45 minutes. Deployment usually takes 4–10 minutes.
@@ -99,7 +100,9 @@ The verifier checks website connectivity, the Auto Scaling Group limits, the hig
 
 ## Important cleanup requirement
 
-Always use menu option 6 before the AWS Academy session ends. Exiting the menu does not delete AWS resources.
+The stack schedules automatic deletion four hours after deployment as a safety net. The timer continues even if CloudShell is closed and is not extended by activity in the lab.
+
+Do not wait for the timer during normal use. Always use menu option 6 when the activity is complete so resources are removed immediately. Exiting the menu does not delete AWS resources.
 
 If normal deletion fails, open CloudFormation in `us-east-1`, inspect the stack events, and retry deletion. Ask your lecturer before manually deleting individual stack resources.
 
@@ -116,6 +119,8 @@ Use menu option 2 to inspect it. If you want a fresh attempt, delete the existin
 ### Deployment failed
 
 Open CloudFormation in `us-east-1`, select `aws-foundation-troubleshooting-lab`, and inspect the **Events** tab. Delete a failed stack before trying again.
+
+If the failed resource is the automatic cleanup function, confirm that the AWS Academy account provides a Lambda-compatible role named `LabRole`. Lecturers using a different environment can set `CLEANUP_ROLE_ARN` to a suitable existing role ARN before running the script.
 
 ### The web server setup timed out
 

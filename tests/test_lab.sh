@@ -44,6 +44,22 @@ test_duplicate_deployment_blocked() {
     assert_contains "${output}" "A lab environment already exists." "duplicate deployment prevention"
 }
 
+test_cleanup_role_override() {
+    local output
+    output="$(CLEANUP_ROLE_ARN='arn:aws:iam::123456789012:role/TestLabRole' resolve_cleanup_role_arn)"
+    assert_contains "${output}" "arn:aws:iam::123456789012:role/TestLabRole" "cleanup role override"
+}
+
+test_automatic_cleanup_template() {
+    local template
+    template="$(<"${REPO_DIR}/infra/template.yaml")"
+    assert_contains "${template}" "Type: AWS::Lambda::Function" "automatic cleanup Lambda"
+    assert_contains "${template}" "Type: AWS::Events::Rule" "automatic cleanup schedule"
+    assert_contains "${template}" "ScheduleExpression: rate(4 hours)" "four-hour cleanup limit"
+    assert_contains "${template}" "boto3.client(\"cloudformation\").delete_stack" "automatic stack deletion"
+    assert_contains "${template}" "Principal: events.amazonaws.com" "scheduled Lambda permission"
+}
+
 test_progressive_web_hints() {
     local test_state output_one output_two output_three
     test_state="$(mktemp -d)"
@@ -96,6 +112,7 @@ mock_stack_outputs() {
         AutoScalingGroupName) printf 'asg-test\n' ;;
         ScalingPolicyName) printf 'policy-test\n' ;;
         HighCpuAlarmName) printf 'alarm-test\n' ;;
+        AutomaticCleanup) printf 'Enabled - stack deletion starts four hours after deployment\n' ;;
         *) printf 'None\n' ;;
     esac
 }
@@ -188,6 +205,8 @@ test_successful_verification() {
 
 test_no_lab_status
 test_duplicate_deployment_blocked
+test_cleanup_role_override
+test_automatic_cleanup_template
 test_progressive_web_hints
 test_progressive_asg_hints
 test_hint_category_menu
