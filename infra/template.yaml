@@ -5,6 +5,9 @@ Parameters:
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  CleanupRoleArn:
+    Type: String
+    Description: ARN of the AWS Academy LabRole used by the automatic cleanup function
 
 Resources:
   LabVpc:
@@ -233,6 +236,50 @@ Resources:
       AlarmActions:
         - !Ref HighCpuScaleOutPolicy
 
+  AutomaticCleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Deletes the troubleshooting lab stack after four hours
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !Ref CleanupRoleArn
+      Timeout: 30
+      Environment:
+        Variables:
+          STACK_NAME: !Ref AWS::StackName
+      Code:
+        ZipFile: |
+          import os
+
+          import boto3
+
+
+          def handler(event, context):
+              stack_name = os.environ["STACK_NAME"]
+              boto3.client("cloudformation").delete_stack(
+                  StackName=stack_name,
+                  ClientRequestToken=f"auto-cleanup-{context.aws_request_id}",
+              )
+              return {"stack": stack_name, "cleanup": "started"}
+
+  AutomaticCleanupSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Automatically delete the troubleshooting lab after four hours
+      ScheduleExpression: rate(4 hours)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt AutomaticCleanupFunction.Arn
+          Id: AutomaticCleanupFunction
+
+  AutomaticCleanupPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref AutomaticCleanupFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AutomaticCleanupSchedule.Arn
+
 Outputs:
   AutoScalingGroupName:
     Description: Auto Scaling group used by the troubleshooting lab
@@ -249,3 +296,9 @@ Outputs:
   SecurityGroupId:
     Description: Security group used by the troubleshooting lab
     Value: !Ref WebSecurityGroup
+  AutomaticCleanup:
+    Description: Automatic cleanup period for the troubleshooting lab
+    Value: Enabled - stack deletion starts four hours after deployment
+  AutomaticCleanupRuleName:
+    Description: EventBridge rule responsible for automatic cleanup
+    Value: !Ref AutomaticCleanupSchedule
