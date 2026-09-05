@@ -77,14 +77,15 @@ The menu will open:
 
 ## Student workflow
 
-1. Select **Deploy Lab Environment** and wait until deployment finishes.
-2. Select **Show Web URL** and test the address in a new browser tab.
-3. Use the AWS console to inspect the environment and identify why the website is unavailable.
-4. Make the minimum configuration changes needed to restore access.
-5. Inspect the high-CPU alarm and its attached Auto Scaling policy.
-6. Correct the policy so that a high-CPU event would add one instance.
-7. Select **Verify My Solution**.
-8. When finished, select **Delete Lab Environment** and type `DELETE` to confirm.
+1. Select **Deploy Lab Environment** and wait until deployment finishes. After showing the environment details, the script closes automatically.
+2. Run `bash run.sh` again whenever you need the menu. If necessary, first run `cd ~/AWS-FS-Practice`.
+3. Select **Show Web URL** and test the address in a new browser tab.
+4. Use the AWS console to inspect the environment and identify why the website is unavailable.
+5. Make the minimum configuration changes needed to restore access.
+6. Inspect the high-CPU alarm and its attached Auto Scaling policy.
+7. Correct the policy so that a high-CPU event would add one instance.
+8. Run `bash run.sh` again and select **Verify My Solution**.
+9. When finished, select **Delete Lab Environment** and type `DELETE` to confirm.
 
 Use **Get Troubleshooting Hints** if you become stuck. Web connectivity and Auto Scaling have separate sets of three progressive hints.
 
@@ -115,6 +116,10 @@ Start or restart the AWS Academy Learner Lab, wait for the AWS indicator to turn
 ### A lab already exists
 
 Use menu option 2 to inspect it. If you want a fresh attempt, delete the existing lab with option 6 before deploying again.
+
+### The menu closed or CloudShell was refreshed
+
+The AWS environment continues running independently of the browser terminal. Return to CloudShell and run `cd ~/AWS-FS-Practice`, followed by `bash run.sh`. Select option 2 to check the existing lab rather than deploying another environment.
 
 ### Deployment failed
 

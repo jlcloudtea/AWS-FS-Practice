@@ -68,16 +68,18 @@ For a non-AWS-Academy account, set `CLEANUP_ROLE_ARN` to an existing Lambda exec
 Test the feature branch in a fresh AWS Academy Learner Lab account:
 
 1. Deploy successfully in `us-east-1`.
-2. Confirm a second deployment is blocked.
-3. Confirm the initial web request fails.
-4. Confirm both categories of hints appear in order.
-5. Correct the two connectivity faults and confirm the website check passes while the policy check fails.
-6. Correct the scaling adjustment and confirm all verification checks pass.
-7. Confirm the ASG still has one InService instance; verification must not execute the policy.
-8. Delete the stack from the menu.
-9. Confirm the VPC, ASG instances, Launch Template, scaling policy, alarm, security group, route table, subnets, Internet Gateway, EventBridge rule, and cleanup Lambda are removed.
-10. In a separate trial, leave the stack deployed and confirm that automatic deletion begins approximately four hours after deployment.
-11. Deploy and delete once more to validate repeatability.
+2. Confirm the deployment summary is displayed and the menu process then exits normally.
+3. Run `bash run.sh` again and confirm that the existing lab is detected.
+4. Confirm a second deployment is blocked.
+5. Confirm the initial web request fails.
+6. Confirm both categories of hints appear in order.
+7. Correct the two connectivity faults and confirm the website check passes while the policy check fails.
+8. Correct the scaling adjustment and confirm all verification checks pass.
+9. Confirm the ASG still has one InService instance; verification must not execute the policy.
+10. Delete the stack from the menu.
+11. Confirm the VPC, ASG instances, Launch Template, scaling policy, alarm, security group, route table, subnets, Internet Gateway, EventBridge rule, and cleanup Lambda are removed.
+12. In a separate trial, leave the stack deployed and confirm that automatic deletion begins approximately four hours after deployment.
+13. Deploy and delete once more to validate repeatability.
 
 ## Recovery from failed deletion
 

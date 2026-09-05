@@ -229,25 +229,25 @@ deploy_lab() {
 
     printf '\n'
     info "Checking the AWS Academy environment..."
-    aws_session_ready || return
-    require_command curl || return
+    aws_session_ready || return 1
+    require_command curl || return 1
 
     if [[ ! -f "${TEMPLATE_FILE}" ]]; then
         error "CloudFormation template not found: ${TEMPLATE_FILE}"
-        return
+        return 1
     fi
 
     if stack_exists; then
         warning "A lab environment already exists."
         printf "Use option 2 to check it or option 6 to delete it before deploying again.\n"
-        return
+        return 1
     fi
     rm -f -- "${READY_FILE}"
 
     cleanup_role_arn="$(resolve_cleanup_role_arn)" || {
         error "The AWS Academy LabRole ARN could not be determined."
         printf "Set CLEANUP_ROLE_ARN to a Lambda-compatible role ARN, then try again.\n"
-        return
+        return 1
     }
 
     info "[1/7] Creating the VPC and subnets..."
@@ -264,7 +264,7 @@ deploy_lab() {
         --no-fail-on-empty-changeset; then
         error "Deployment failed."
         printf "Review the recent CloudFormation events in the AWS console, then delete the failed stack.\n"
-        return
+        return 1
     fi
 
     asg_name="$(stack_output AutoScalingGroupName)"
@@ -273,36 +273,36 @@ deploy_lab() {
 
     if [[ -z "${asg_name}" || "${asg_name}" == "None" ]]; then
         error "Deployment completed, but the Auto Scaling Group could not be found."
-        return
+        return 1
     fi
 
     info "[6/7] Waiting for the Auto Scaling web server to become ready..."
     instance_id="$(wait_for_asg_instance "${asg_name}")"
     if [[ -z "${instance_id}" || "${instance_id}" == "None" ]]; then
         error "The Auto Scaling Group did not produce an InService instance in time."
-        return
+        return 1
     fi
     public_ip="$(instance_public_ip "${instance_id}")"
     if [[ -z "${public_ip}" || "${public_ip}" == "None" ]]; then
         error "The Auto Scaling instance does not have a public IP address."
-        return
+        return 1
     fi
 
     aws ec2 wait instance-status-ok --instance-ids "${instance_id}" || {
         error "The EC2 instance did not pass its status checks in time."
-        return
+        return 1
     }
 
     if ! wait_for_bootstrap "${public_ip}"; then
         warning "The web server setup is taking longer than expected."
         printf "The two network faults were not applied, so setup can continue.\n"
         printf "Wait two minutes, delete the lab, and deploy it again.\n"
-        return
+        return 1
     fi
     printf '\n'
 
     info "[7/7] Applying the troubleshooting scenario..."
-    seed_troubleshooting_faults "${route_table_id}" "${security_group_id}" || return
+    seed_troubleshooting_faults "${route_table_id}" "${security_group_id}" || return 1
     mkdir -p "${STATE_DIR}"
     printf '0\n' > "${WEB_HINT_FILE}"
     printf '0\n' > "${ASG_HINT_FILE}"
@@ -316,6 +316,7 @@ deploy_lab() {
     cleanup_description="$(stack_output AutomaticCleanup)"
     printf "Automatic cleanup: %s\n" "${cleanup_description}"
     printf "The environment is ready for troubleshooting.\n"
+    return 0
 }
 
 check_lab_status() {
@@ -637,7 +638,16 @@ main() {
         printf "Select an option [1-7]: "
         read -r choice
         case "${choice}" in
-            1) deploy_lab; pause ;;
+            1)
+                if deploy_lab; then
+                    printf '\nDeployment is complete, so this menu will now close.\n'
+                    printf 'To check status, show the Web URL, get hints, verify, or delete the lab, run:\n\n'
+                    printf '  cd %q\n' "${SCRIPT_DIR}"
+                    printf '  bash run.sh\n\n'
+                    exit 0
+                fi
+                pause
+                ;;
             2) check_lab_status; pause ;;
             3) show_web_url; pause ;;
             4) show_hint_menu; pause ;;
